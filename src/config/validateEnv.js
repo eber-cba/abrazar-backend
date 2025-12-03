@@ -5,8 +5,8 @@ const envSchema = z.object({
   PORT: z.string().default('3000'),
   
   // Database
-  DATABASE_URL: z.string().url(),
-  REDIS_URL: z.string().url(),
+  DATABASE_URL: z.string().min(1),
+  REDIS_URL: z.string().optional(),
   
   // JWT
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars'),
@@ -20,12 +20,21 @@ const envSchema = z.object({
   CLOUDINARY_API_SECRET: z.string().min(1),
   
   // Firebase
-  FIREBASE_PROJECT_ID: z.string().min(1),
-  FIREBASE_CLIENT_EMAIL: z.string().email(),
-  FIREBASE_PRIVATE_KEY: z.string().min(1),
+  FIREBASE_SERVICE_ACCOUNT_PATH: z.string().optional(),
+  FIREBASE_PROJECT_ID: z.string().optional(),
+  FIREBASE_CLIENT_EMAIL: z.string().optional(),
+  FIREBASE_PRIVATE_KEY: z.string().optional(),
   
   // Google Maps (Optional - Mock mode if missing)
   GOOGLE_MAPS_API_KEY: z.string().optional(),
+}).refine((data) => {
+  // Ensure at least one Firebase auth method is present
+  const hasServiceAccount = !!data.FIREBASE_SERVICE_ACCOUNT_PATH;
+  const hasEnvVars = !!(data.FIREBASE_PROJECT_ID && data.FIREBASE_CLIENT_EMAIL && data.FIREBASE_PRIVATE_KEY);
+  return hasServiceAccount || hasEnvVars;
+}, {
+  message: "Must provide either FIREBASE_SERVICE_ACCOUNT_PATH or (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY)",
+  path: ["FIREBASE_SERVICE_ACCOUNT_PATH"],
 });
 
 function validateEnv() {
