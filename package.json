@@ -69,8 +69,5 @@
       "/node_modules/"
     ],
     "testRunner": "jest-circus/runner"
-  },
-  "prisma": {
-    "seed": "node prisma/seed.js"
   }
 }
