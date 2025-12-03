@@ -8,7 +8,10 @@ class RealtimeService {
     this.init();
   }
 
-  init() {
+  async init() {
+    // Wait a bit for Redis to be fully ready
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
     // Check if Redis is available
     if (redisSubscriber.status !== 'ready' && redisSubscriber.status !== 'connecting') {
       console.warn('⚠️ Realtime service disabled: Redis unavailable');
@@ -16,6 +19,14 @@ class RealtimeService {
     }
 
     try {
+      // Wait for Redis to be ready before subscribing
+      if (redisSubscriber.status === 'connecting') {
+        await new Promise((resolve) => {
+          redisSubscriber.once('ready', resolve);
+          setTimeout(resolve, 5000); // Timeout after 5 seconds
+        });
+      }
+
       redisSubscriber.subscribe(this.channel, (err, count) => {
         if (err) {
           console.error('Failed to subscribe to realtime channel:', err.message);

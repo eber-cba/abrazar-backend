@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { getQueueStats } = require('../queues');
+const { getQueuesStats } = require('../queues');
 const logger = require('../config/logger');
 
 /**
@@ -22,12 +22,10 @@ const healthCheckScheduler = {
       
       try {
         // Verificar estado de colas
-        const queues = ['stats', 'email', 'cleanup', 'uploads'];
+        const queueStats = await getQueuesStats();
         const alerts = [];
         
-        for (const queueName of queues) {
-          const stats = await getQueueStats(queueName);
-          
+        for (const [queueName, stats] of Object.entries(queueStats)) {
           // Alertar si hay muchos jobs fallidos
           if (stats.failed > 10) {
             alerts.push(`Queue ${queueName} has ${stats.failed} failed jobs`);
@@ -47,7 +45,7 @@ const healthCheckScheduler = {
           logger.info('System health check passed');
         }
       } catch (error) {
-        logger.error('Error in health check scheduler:', error);
+        logger.error('Error in health check scheduler:', error.message);
       }
     });
   },
