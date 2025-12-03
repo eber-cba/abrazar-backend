@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: abrazar_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Backend Test Suite
+  test:
+    image: abrazar-backend:test
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://test_user:test_password@db:5432/abrazar_test
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: test-jwt-secret-key-minimum-32-characters-long
+      JWT_REFRESH_SECRET: test-jwt-refresh-secret-key-minimum-32-characters
+      JWT_EXPIRES_IN: 30d
+      JWT_REFRESH_EXPIRES_IN: 90d
+      CLOUDINARY_CLOUD_NAME: test-cloud
+      CLOUDINARY_API_KEY: test-api-key
+      CLOUDINARY_API_SECRET: test-api-secret
+      FIREBASE_PROJECT_ID: test-project
+      FIREBASE_CLIENT_EMAIL: test@test.com
+      FIREBASE_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nTEST_KEY\n-----END PRIVATE KEY-----"
+      GOOGLE_MAPS_API_KEY: ""
+      CORS_ORIGIN: "*"

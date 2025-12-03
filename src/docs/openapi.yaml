@@ -1,0 +1,100 @@
+openapi: 3.0.0
+info:
+  title: Abrazar API
+  description: API for Abrazar application to help people in street situations.
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000/api
+    description: Local server
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Person:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        status:
+          type: string
+          enum: [REPORTED, VERIFIED, ASSISTING, FOLLOW_UP, RESOLVED]
+        lat:
+          type: number
+        lng:
+          type: number
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        role:
+          type: string
+          enum: [ADMIN, OPERATOR, VOLUNTEER, PUBLIC]
+security:
+  - bearerAuth: []
+paths:
+  /auth/register:
+    post:
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+                name:
+                  type: string
+      responses:
+        "201":
+          description: User created
+  /auth/login:
+    post:
+      summary: Login user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Login successful
+  /persons:
+    get:
+      summary: Get all persons
+      security: []
+      responses:
+        "200":
+          description: List of persons
+    post:
+      summary: Create a person
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Person"
+      responses:
+        "201":
+          description: Person created

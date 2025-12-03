@@ -1,0 +1,577 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// USERS & AUTHENTICATION
+// ============================================================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String
+  name          String?
+  photoUrl      String?
+  role          Role      @default(VOLUNTEER)
+  refreshToken  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  acceptedTerms Boolean   @default(false)
+  
+  // Multi-tenant support
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  
+  // Relations
+  auditLogs           AuditLog[]
+  createdCases        Case[]                 @relation("CreatedBy")
+  updatedCases        Case[]                 @relation("UpdatedBy")
+  assignedCases       Case[]                 @relation("AssignedTo")
+  caseStatusHistory   CaseStatusHistory[]
+  caseHistory         CaseHistory[]
+  comments            Comment[]
+  teamMemberships     TeamMember[]
+  emergenciesMarked   Emergency[]
+  
+  @@index([organizationId])
+  @@index([email])
+
+  // Sessions & Security
+  sessions            UserSession[]
+  revokedTokens       RevokedToken[]
+  
+  // Permissions
+  userPermissions     UserPermission[]
+  
+  // Consents
+  consents            Consent[]
+  consentHistory      ConsentHistory[]
+  
+  // Homeless registrations
+  homelessRegistered  Homeless[]     @relation("HomelessRegisteredBy")
+}
+
+// ============================================================================
+// LEGAL CONSENT TRACKING
+// ============================================================================
+
+model ConsentType {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g., "terms_of_service", "privacy_policy"
+  displayName String   // e.g., "Terms of Service"
+  description String?
+  version     String   @default("1.0") // Current version
+  content     String   @db.Text // Full text of the consent
+  required    Boolean  @default(true) // Is this consent required?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  consents    Consent[]
+  
+  @@index([name])
+}
+
+model Consent {
+  id             String      @id @default(uuid())
+  userId         String
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consentTypeId  String
+  consentType    ConsentType @relation(fields: [consentTypeId], references: [id], onDelete: Cascade)
+  version        String      // Version of consent accepted
+  granted        Boolean     @default(true) // true = granted, false = revoked
+  grantedAt      DateTime    @default(now())
+  revokedAt      DateTime?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  
+  @@unique([userId, consentTypeId])
+  @@index([userId])
+  @@index([consentTypeId])
+  @@index([granted])
+}
+
+model ConsentHistory {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consentType   String   // Name of consent type (denormalized for immutability)
+  version       String   // Version at time of action
+  action        String   // "GRANTED" or "REVOKED"
+  ipAddress     String?
+  userAgent     String?
+  metadata      Json?    // Additional context
+  createdAt     DateTime @default(now())
+  
+  @@index([userId])
+  @@index([consentType])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// PERMISSIONS & RBAC
+// ============================================================================
+
+model Permission {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g., "cases:create", "users:delete"
+  description String?
+  resource    String   // e.g., "cases", "users", "teams"
+  action      String   // e.g., "create", "read", "update", "delete"
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  rolePermissions RolePermission[]
+  userPermissions UserPermission[]
+  
+  @@index([resource])
+  @@index([action])
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  role         Role
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+  
+  @@unique([role, permissionId])
+  @@index([role])
+}
+
+model UserPermission {
+  id           String     @id @default(uuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  granted      Boolean    @default(true) // true = grant, false = revoke (override)
+  createdAt    DateTime   @default(now())
+  
+  @@unique([userId, permissionId])
+  @@index([userId])
+}
+
+model UserSession {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token        String   @unique // Refresh token or session ID
+  deviceInfo   String?  // User Agent, OS, etc.
+  ipAddress    String?
+  isValid      Boolean  @default(true)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+model RevokedToken {
+  id        String   @id @default(uuid())
+  token     String   @unique // The token string (signature or full token)
+  reason    String?
+  revokedAt DateTime @default(now())
+  expiresAt DateTime // When the token would have naturally expired
+  
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([token])
+  @@index([userId])
+}
+
+// ============================================================================
+// ORGANIZATIONS (Municipalities, NGOs, Generic)
+// ============================================================================
+
+model Organization {
+  id            String             @id @default(uuid())
+  type          OrganizationType
+  name          String
+  city          String?
+  province      String?
+  country       String?            @default("Argentina")
+  contactEmail  String?
+  contactPhone  String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  
+  // Relations
+  users         User[]
+  teams         Team[]
+  zones         Zone[]
+  cases         Case[]
+  servicePoints ServicePoint[]
+  homeless      Homeless[]
+  
+  @@index([type])
+  @@index([city])
+}
+
+// ============================================================================
+// GEOGRAPHIC ZONES
+// ============================================================================
+
+model Zone {
+  id             String       @id @default(uuid())
+  name           String
+  description    String?
+  polygon        Json         // GeoJSON polygon
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  cases          Case[]
+  servicePoints  ServicePoint[]
+  
+  @@index([organizationId])
+}
+
+// ============================================================================
+// TEAMS & TEAM MEMBERS
+// ============================================================================
+
+model Team {
+  id             String       @id @default(uuid())
+  name           String
+  description    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  members        TeamMember[]
+  assignedCases  Case[]
+  
+  @@index([organizationId])
+}
+
+model TeamMember {
+  id         String       @id @default(uuid())
+  roleInTeam TeamRole     @default(VOLUNTEER)
+  joinedAt   DateTime     @default(now())
+  
+  teamId     String
+  team       Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
+}
+
+// ============================================================================
+// CASES (formerly Person)
+// ============================================================================
+
+model Case {
+  id                String       @id @default(uuid())
+  fullName          String
+  age               Int?
+  description       String?
+  photoUrl          String?
+  lat               Float
+  lng               Float
+  status            CaseStatus   @default(REPORTED)
+  
+  // Emergency handling
+  isEmergency       Boolean      @default(false)
+  emergencyLevel    Int?         // 1-5, null if not emergency
+  
+  // Consent & privacy
+  reportedByConsent Boolean      @default(false)
+  
+  // Multi-tenant & assignment
+  organizationId    String?
+  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  
+  zoneId            String?
+  zone              Zone?         @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  
+  assignedToUserId  String?
+  assignedToUser    User?         @relation("AssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  
+  assignedToTeamId  String?
+  assignedToTeam    Team?         @relation(fields: [assignedToTeamId], references: [id], onDelete: SetNull)
+  
+  // Tracking
+  createdBy         String
+  creator           User          @relation("CreatedBy", fields: [createdBy], references: [id])
+  
+  updatedBy         String?
+  updater           User?         @relation("UpdatedBy", fields: [updatedBy], references: [id])
+  
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  
+  // Relations
+  statusHistory     CaseStatusHistory[]
+  caseHistory       CaseHistory[]
+  comments          Comment[]
+  emergencies       Emergency[]
+  
+  @@index([organizationId])
+  @@index([zoneId])
+  @@index([assignedToUserId])
+  @@index([assignedToTeamId])
+  @@index([status])
+  @@index([isEmergency])
+  @@index([createdBy])
+  
+  // Composite indexes for dashboard filtering
+  @@index([organizationId, status])
+  @@index([organizationId, isEmergency])
+  @@index([organizationId, zoneId])
+  @@index([organizationId, assignedToTeamId])
+  @@index([organizationId, createdAt])
+}
+
+// ============================================================================
+// CASE HISTORY & AUDIT TRAIL
+// ============================================================================
+
+model CaseStatusHistory {
+  id        String     @id @default(uuid())
+  caseId    String
+  case      Case       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  oldStatus CaseStatus
+  newStatus CaseStatus
+  changedBy String
+  user      User       @relation(fields: [changedBy], references: [id])
+  createdAt DateTime   @default(now())
+  
+  @@index([caseId])
+  @@index([changedBy])
+}
+
+model CaseHistory {
+  id              String   @id @default(uuid())
+  caseId          String
+  case            Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  
+  performedByUserId String
+  performedBy     User     @relation(fields: [performedByUserId], references: [id])
+  
+  action          String   // "created", "status_changed", "assigned", "edited", "commented", "emergency_marked"
+  description     String?
+  previousStatus  String?
+  newStatus       String?
+  metadata        Json?    // Additional context
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([caseId])
+  @@index([performedByUserId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// EMERGENCIES
+// ============================================================================
+
+model Emergency {
+  id          String   @id @default(uuid())
+  caseId      String
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  
+  level       Int      // 1-5
+  reason      String?
+  resolved    Boolean  @default(false)
+  resolvedAt  DateTime?
+  
+  markedBy    String
+  markedByUser User    @relation(fields: [markedBy], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([caseId])
+  @@index([resolved])
+  @@index([level])
+}
+
+// ============================================================================
+// AUDIT LOG (System-wide)
+// ============================================================================
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  
+  action     String   // "login", "create_user", "edit_case", "assign_case", "create_team", etc.
+  targetType String?  // "case", "user", "team", "zone", "organization"
+  targetId   String?
+  ipAddress  String?
+  metadata   Json?    // Additional context
+  
+  createdAt  DateTime @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([targetType])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// COMMENTS
+// ============================================================================
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+  
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  
+  caseId    String
+  case      Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  
+  @@index([caseId])
+  @@index([authorId])
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum Role {
+  ADMIN                 // Global admin
+  ORGANIZATION_ADMIN    // Organization admin
+  COORDINATOR           // Team coordinator
+  SOCIAL_WORKER         // Social worker
+  VOLUNTEER             // Volunteer
+  DATA_ANALYST          // Data analyst
+  OPERATOR              // Legacy operator role
+  PUBLIC                // Public user
+}
+
+enum OrganizationType {
+  MUNICIPALITY
+  NGO
+  GENERIC
+}
+
+enum TeamRole {
+  LEADER
+  COORDINATOR
+  VOLUNTEER
+}
+
+enum CaseStatus {
+  REPORTED
+  VERIFIED
+  ASSISTING
+  FOLLOW_UP
+  RESOLVED
+}
+
+// ============================================================================
+// SERVICE POINTS (Puntos de Servicio)
+// ============================================================================
+
+model ServicePoint {
+  id                String            @id @default(uuid())
+  type              ServicePointType
+  name              String
+  description       String?
+  address           String
+  latitude          Float
+  longitude         Float
+  openingHours      String?           // Formato JSON o texto
+  capacity          Int?
+  servicesOffered   Json?             // Array de servicios ofrecidos
+  contactPhone      String?
+  email             String?
+  isPublic          Boolean           @default(true)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  // Multi-tenant support
+  organizationId    String
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Optional: Zone integration
+  zoneId            String?
+  zone              Zone?             @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  
+  @@index([organizationId])
+  @@index([type])
+  @@index([isPublic])
+  @@index([zoneId])
+}
+
+enum ServicePointType {
+  HEALTH_CENTER      // Centro de salud
+  REFUGE             // Refugio
+  SOUP_KITCHEN       // Comedor
+  SHOWER_POINT       // Punto de ducha
+  FOOD_POINT         // Punto de comida
+  TEMP_SHELTER       // Albergue temporal
+}
+
+// ============================================================================
+// HOMELESS (Personas en Situación de Calle)
+// ============================================================================
+
+model Homeless {
+  id                    String       @id @default(uuid())
+  
+  // Basic Information
+  nombre                String?
+  apellido              String?
+  apodo                 String?      // Nickname
+  edad                  Int?
+  
+  // Health & Social Status
+  estadoFisico          String?      // Physical condition
+  adicciones            String?      // Addictions
+  estadoMental          String?      // Mental health status
+  atencionMedicaUrgente Boolean      @default(false)
+  
+  // Location
+  lat                   Float
+  lng                   Float
+  ultimaVezVisto        DateTime     @default(now())
+  
+  // Media
+  fotoUrl               String?
+  
+  // Consent & Registration
+  consentimientoVerbal  Boolean      @default(false)
+  registradoPor         String       // User ID who registered
+  registrador           User         @relation("HomelessRegisteredBy", fields: [registradoPor], references: [id])
+  
+  // Multi-tenancy
+  organizationId        String
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  
+  @@index([organizationId])
+  @@index([lat, lng])
+  @@index([ultimaVezVisto])
+  @@index([registradoPor])
+}
+
