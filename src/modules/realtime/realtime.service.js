@@ -4,28 +4,40 @@ class RealtimeService {
   constructor() {
     this.clients = new Set();
     this.channel = 'realtime_events';
+    this.isRedisAvailable = false;
     this.init();
   }
 
   init() {
-    redisSubscriber.subscribe(this.channel, (err, count) => {
-      if (err) {
-        console.error('Failed to subscribe to realtime channel:', err);
-      } else {
-        console.log(`Subscribed to ${this.channel}. Count: ${count}`);
-      }
-    });
+    // Check if Redis is available
+    if (redisSubscriber.status !== 'ready' && redisSubscriber.status !== 'connecting') {
+      console.warn('⚠️ Realtime service disabled: Redis unavailable');
+      return;
+    }
 
-    redisSubscriber.on('message', (channel, message) => {
-      if (channel === this.channel) {
-        try {
-          const event = JSON.parse(message);
-          this.broadcastToLocalClients(event);
-        } catch (error) {
-          console.error('Error parsing realtime message:', error);
+    try {
+      redisSubscriber.subscribe(this.channel, (err, count) => {
+        if (err) {
+          console.error('Failed to subscribe to realtime channel:', err.message);
+        } else {
+          console.log(`✅ Subscribed to ${this.channel}. Count: ${count}`);
+          this.isRedisAvailable = true;
         }
-      }
-    });
+      });
+
+      redisSubscriber.on('message', (channel, message) => {
+        if (channel === this.channel) {
+          try {
+            const event = JSON.parse(message);
+            this.broadcastToLocalClients(event);
+          } catch (error) {
+            console.error('Error parsing realtime message:', error.message);
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Failed to initialize realtime service:', error.message);
+    }
   }
 
   addClient(req, res) {
@@ -56,6 +68,11 @@ class RealtimeService {
   }
 
   async emitEvent(type, payload, filters = {}) {
+    if (!this.isRedisAvailable) {
+      console.warn('Cannot emit realtime event: Redis unavailable');
+      return;
+    }
+
     const event = {
       type,
       payload,
@@ -63,8 +80,12 @@ class RealtimeService {
       timestamp: new Date().toISOString(),
     };
 
-    // Publish to Redis so all instances receive it
-    await redisClient.publish(this.channel, JSON.stringify(event));
+    try {
+      // Publish to Redis so all instances receive it
+      await redisClient.publish(this.channel, JSON.stringify(event));
+    } catch (error) {
+      console.error('Failed to publish realtime event:', error.message);
+    }
   }
 
   broadcastToLocalClients(event) {

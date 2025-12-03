@@ -9,8 +9,11 @@ const logger = require('../config/logger');
  * del sistema para procesamiento asíncrono de tareas pesadas.
  */
 
+// Check if Redis is available
+const isRedisAvailable = redisClient.status === 'ready' || redisClient.status === 'connecting';
+
 // Configuración común para todas las colas
-const defaultQueueConfig = {
+const defaultQueueConfig = isRedisAvailable ? {
   connection: redisClient,
   defaultJobOptions: {
     attempts: 3, // Reintentar 3 veces si falla
@@ -26,7 +29,32 @@ const defaultQueueConfig = {
       age: 7 * 24 * 3600, // Mantener jobs fallidos por 7 días
     },
   },
-};
+} : null;
+
+// ============================================================================
+// MOCK QUEUE (when Redis is unavailable)
+// ============================================================================
+
+class MockQueue {
+  constructor(name) {
+    this.name = name;
+  }
+  
+  async add() {
+    logger.warn(`Queue ${this.name} is disabled (Redis unavailable). Job skipped.`);
+    return { id: 'mock', data: {} };
+  }
+  
+  on() { return this; }
+  async getWaitingCount() { return 0; }
+  async getActiveCount() { return 0; }
+  async getCompletedCount() { return 0; }
+  async getFailedCount() { return 0; }
+  async getDelayedCount() { return 0; }
+  async drain() { return; }
+  async clean() { return; }
+  async close() { return; }
+}
 
 // ============================================================================
 // QUEUE DEFINITIONS
@@ -34,77 +62,64 @@ const defaultQueueConfig = {
 
 /**
  * statsQueue - Cola para recalcular estadísticas pesadas
- * 
- * Jobs:
- * - recalculate-stats: Recalcula estadísticas de una organización
- * 
- * Procesamiento: Cada 30 minutos (programado por cron)
  */
-const statsQueue = new Queue('stats', defaultQueueConfig);
+const statsQueue = isRedisAvailable 
+  ? new Queue('stats', defaultQueueConfig)
+  : new MockQueue('stats');
 
 /**
  * emailQueue - Cola para envío de emails y notificaciones
- * 
- * Jobs:
- * - send-email: Envía un email individual
- * - send-bulk-email: Envía emails masivos
- * - send-notification: Envía notificación push
- * 
- * Procesamiento: Inmediato con rate limiting
  */
-const emailQueue = new Queue('email', defaultQueueConfig);
+const emailQueue = isRedisAvailable
+  ? new Queue('email', defaultQueueConfig)
+  : new MockQueue('email');
 
 /**
  * cleanupQueue - Cola para limpieza de datos obsoletos
- * 
- * Jobs:
- * - cleanup-sessions: Elimina sesiones expiradas
- * - cleanup-tokens: Elimina tokens revocados antiguos
- * - cleanup-cache: Limpia cache Redis obsoleto
- * 
- * Procesamiento: Diario a las 4 AM (programado por cron)
  */
-const cleanupQueue = new Queue('cleanup', defaultQueueConfig);
+const cleanupQueue = isRedisAvailable
+  ? new Queue('cleanup', defaultQueueConfig)
+  : new MockQueue('cleanup');
 
 /**
  * uploadsQueue - Cola para procesamiento de imágenes/documentos
- * 
- * Jobs:
- * - process-image: Redimensiona, comprime y sube imagen a Cloudinary
- * - process-document: Valida y procesa documentos
- * 
- * Procesamiento: Inmediato al subir archivo
  */
-const uploadsQueue = new Queue('uploads', defaultQueueConfig);
+const uploadsQueue = isRedisAvailable
+  ? new Queue('uploads', defaultQueueConfig)
+  : new MockQueue('uploads');
 
 // ============================================================================
 // QUEUE EVENTS & MONITORING
 // ============================================================================
 
-// Logging de eventos importantes para todas las colas
 const queues = [statsQueue, emailQueue, cleanupQueue, uploadsQueue];
 
-queues.forEach((queue) => {
-  queue.on('error', (error) => {
-    logger.error(`Queue ${queue.name} error:`, error);
-  });
+// Only set up event listeners for real queues
+if (isRedisAvailable) {
+  queues.forEach((queue) => {
+    queue.on('error', (error) => {
+      logger.error(`Queue ${queue.name} error:`, error.message);
+    });
 
-  queue.on('waiting', (jobId) => {
-    logger.debug(`Job ${jobId} is waiting in queue ${queue.name}`);
-  });
+    queue.on('waiting', (jobId) => {
+      logger.debug(`Job ${jobId} is waiting in queue ${queue.name}`);
+    });
 
-  queue.on('active', (job) => {
-    logger.info(`Job ${job.id} started processing in queue ${queue.name}`);
-  });
+    queue.on('active', (job) => {
+      logger.info(`Job ${job.id} started processing in queue ${queue.name}`);
+    });
 
-  queue.on('completed', (job) => {
-    logger.info(`Job ${job.id} completed in queue ${queue.name}`);
-  });
+    queue.on('completed', (job) => {
+      logger.info(`Job ${job.id} completed in queue ${queue.name}`);
+    });
 
-  queue.on('failed', (job, error) => {
-    logger.error(`Job ${job?.id} failed in queue ${queue.name}:`, error);
+    queue.on('failed', (job, error) => {
+      logger.error(`Job ${job?.id} failed in queue ${queue.name}:`, error.message);
+    });
   });
-});
+} else {
+  logger.warn('⚠️ Queues are disabled because Redis is unavailable.');
+}
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -112,76 +127,96 @@ queues.forEach((queue) => {
 
 /**
  * Agrega un job a la cola de estadísticas
- * @param {Object} data - Datos del job
- * @param {string} data.organizationId - ID de la organización
- * @param {string} data.type - Tipo de estadística a recalcular
  */
 async function addStatsJob(data) {
-  return await statsQueue.add('recalculate-stats', data, {
-    priority: 2, // Prioridad media
-  });
+  try {
+    return await statsQueue.add('recalculate-stats', data, {
+      priority: 2,
+    });
+  } catch (error) {
+    logger.error('Failed to add stats job:', error.message);
+    return null;
+  }
 }
 
 /**
  * Agrega un job a la cola de emails
- * @param {Object} data - Datos del job
- * @param {string} data.to - Email destinatario
- * @param {string} data.subject - Asunto
- * @param {string} data.body - Cuerpo del email
- * @param {string} data.template - Template a usar (opcional)
  */
 async function addEmailJob(data) {
-  return await emailQueue.add('send-email', data, {
-    priority: 1, // Alta prioridad
-  });
+  try {
+    return await emailQueue.add('send-email', data, {
+      priority: 1,
+    });
+  } catch (error) {
+    logger.error('Failed to add email job:', error.message);
+    return null;
+  }
 }
 
 /**
  * Agrega un job a la cola de limpieza
- * @param {string} type - Tipo de limpieza ('sessions', 'tokens', 'cache')
  */
 async function addCleanupJob(type) {
-  return await cleanupQueue.add(`cleanup-${type}`, { type }, {
-    priority: 3, // Baja prioridad
-  });
+  try {
+    return await cleanupQueue.add(`cleanup-${type}`, { type }, {
+      priority: 3,
+    });
+  } catch (error) {
+    logger.error('Failed to add cleanup job:', error.message);
+    return null;
+  }
 }
 
 /**
  * Agrega un job a la cola de uploads
- * @param {Object} data - Datos del job
- * @param {Buffer} data.fileBuffer - Buffer del archivo
- * @param {string} data.userId - ID del usuario
- * @param {string} data.type - Tipo de archivo ('image', 'document')
  */
 async function addUploadJob(data) {
-  return await uploadsQueue.add('process-image', data, {
-    priority: 1, // Alta prioridad
-  });
+  try {
+    return await uploadsQueue.add('process-image', data, {
+      priority: 1,
+    });
+  } catch (error) {
+    logger.error('Failed to add upload job:', error.message);
+    return null;
+  }
 }
 
 /**
  * Obtiene estadísticas de todas las colas
  */
 async function getQueuesStats() {
+  if (!isRedisAvailable) {
+    return {
+      stats: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 },
+      email: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 },
+      cleanup: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 },
+      uploads: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 },
+    };
+  }
+
   const stats = {};
   
-  for (const queue of queues) {
-    const [waiting, active, completed, failed, delayed] = await Promise.all([
-      queue.getWaitingCount(),
-      queue.getActiveCount(),
-      queue.getCompletedCount(),
-      queue.getFailedCount(),
-      queue.getDelayedCount(),
-    ]);
+  try {
+    for (const queue of queues) {
+      const [waiting, active, completed, failed, delayed] = await Promise.all([
+        queue.getWaitingCount(),
+        queue.getActiveCount(),
+        queue.getCompletedCount(),
+        queue.getFailedCount(),
+        queue.getDelayedCount(),
+      ]);
 
-    stats[queue.name] = {
-      waiting,
-      active,
-      completed,
-      failed,
-      delayed,
-      total: waiting + active + completed + failed + delayed,
-    };
+      stats[queue.name] = {
+        waiting,
+        active,
+        completed,
+        failed,
+        delayed,
+        total: waiting + active + completed + failed + delayed,
+      };
+    }
+  } catch (error) {
+    logger.error('Failed to get queue stats:', error.message);
   }
 
   return stats;
@@ -191,22 +226,39 @@ async function getQueuesStats() {
  * Limpia todas las colas (solo para testing)
  */
 async function cleanAllQueues() {
-  for (const queue of queues) {
-    await queue.drain();
-    await queue.clean(0, 1000, 'completed');
-    await queue.clean(0, 1000, 'failed');
+  if (!isRedisAvailable) {
+    logger.warn('Cannot clean queues: Redis unavailable');
+    return;
   }
-  logger.info('All queues cleaned');
+
+  try {
+    for (const queue of queues) {
+      await queue.drain();
+      await queue.clean(0, 1000, 'completed');
+      await queue.clean(0, 1000, 'failed');
+    }
+    logger.info('All queues cleaned');
+  } catch (error) {
+    logger.error('Failed to clean queues:', error.message);
+  }
 }
 
 /**
  * Cierra todas las colas gracefully
  */
 async function closeAllQueues() {
-  for (const queue of queues) {
-    await queue.close();
+  if (!isRedisAvailable) {
+    return;
   }
-  logger.info('All queues closed');
+
+  try {
+    for (const queue of queues) {
+      await queue.close();
+    }
+    logger.info('All queues closed');
+  } catch (error) {
+    logger.error('Failed to close queues:', error.message);
+  }
 }
 
 // ============================================================================
@@ -228,4 +280,7 @@ module.exports = {
   getQueuesStats,
   cleanAllQueues,
   closeAllQueues,
+  
+  // Status
+  isRedisAvailable,
 };
