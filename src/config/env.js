@@ -20,6 +20,7 @@ const envSchema = z.object({
   FIREBASE_PROJECT_ID: z.string().optional(),
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
+  SUPERADMIN_SECRET: z.string().min(1),
 });
 
 const envVars = envSchema.safeParse(process.env);

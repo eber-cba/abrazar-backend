@@ -3,7 +3,10 @@ const app = require('../../src/app');
 const prisma = require('../../src/prismaClient');
 const bcrypt = require('bcrypt');
 
-describe('Global ADMIN Bypass - Integration Tests', () => {
+// The secret set in .env
+const SUPERADMIN_SECRET = 'secure_super_secret_key_123';
+
+describe('Secure SuperAdmin Mode - Integration Tests', () => {
   let adminToken;
   let adminId;
   let orgId;
@@ -13,24 +16,20 @@ describe('Global ADMIN Bypass - Integration Tests', () => {
     // Create test organization
     const org = await prisma.organization.create({
       data: {
-        name: 'Admin Bypass Test Org',
+        name: 'SuperAdmin Test Org',
         type: 'NGO',
       },
     });
     orgId = org.id;
 
-    // Create ADMIN user (Global Admin)
+    // Create ADMIN user
     const hashedPassword = await bcrypt.hash('password123', 10);
     const admin = await prisma.user.create({
       data: {
-        email: `global-admin-${Date.now()}@example.com`,
+        email: `super-admin-${Date.now()}@example.com`,
         password: hashedPassword,
-        name: 'Global Admin',
+        name: 'Super Admin Candidate',
         role: 'ADMIN',
-        // Admin might not have an organization, or could have one. 
-        // Let's assume they don't necessarily need one for this test, 
-        // or we give them a dummy one if schema requires it.
-        // If schema requires orgId, we'll use one.
         organizationId: orgId, 
       },
     });
@@ -43,7 +42,6 @@ describe('Global ADMIN Bypass - Integration Tests', () => {
     adminToken = loginRes.body.token;
 
     // Create a homeless record in the organization
-    // We'll create it directly via Prisma to simulate it existing
     const homeless = await prisma.homeless.create({
       data: {
         lat: -31.4201,
@@ -64,42 +62,49 @@ describe('Global ADMIN Bypass - Integration Tests', () => {
     await prisma.$disconnect();
   });
 
-  describe('Permission Bypass', () => {
-    test('ADMIN can access route protected by requireRole WITHOUT ADMIN in list', async () => {
-      // DELETE /api/homeless/:id requires 'COORDINATOR', 'ORGANIZATION_ADMIN'
-      // It does NOT explicitly list 'ADMIN' in the route definition (unless we changed it, but we didn't, we changed middleware)
+  describe('Permission Bypass Security', () => {
+    test('ADMIN WITHOUT secret header should be DENIED access to restricted route', async () => {
+      // DELETE /api/homeless/:id requires COORDINATOR/ORG_ADMIN. 
+      // ADMIN role itself is NOT in the list.
+      // Without the secret header, bypass should NOT activate.
       
       const res = await request(app)
         .delete(`/api/homeless/${homelessId}`)
         .set('Authorization', `Bearer ${adminToken}`);
 
+      // Should be 403 Forbidden because ADMIN is not in the allowed roles list 
+      // and bypass is not active.
+      expect(res.status).toBe(403);
+    });
+
+    test('ADMIN WITH INCORRECT secret header should be DENIED access', async () => {
+      const res = await request(app)
+        .delete(`/api/homeless/${homelessId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .set('x-superadmin-secret', 'wrong-secret');
+
+      expect(res.status).toBe(403);
+    });
+
+    test('ADMIN WITH CORRECT secret header should be GRANTED access', async () => {
+      const res = await request(app)
+        .delete(`/api/homeless/${homelessId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .set('x-superadmin-secret', SUPERADMIN_SECRET);
+
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('success');
     });
-
-    test('ADMIN can access route protected by requirePermission', async () => {
-      // We need to find a route that uses requirePermission.
-      // If none exist yet, we might skip this or mock one.
-      // Based on file search, permission.routes.js might have some.
-      // Or we can rely on the fact that requireRole uses the same bypass logic.
-      
-      // Let's try to list homeless again (GET /api/homeless) which requires specific roles
-      const res = await request(app)
-        .get('/api/homeless')
-        .set('Authorization', `Bearer ${adminToken}`);
-        
-      expect(res.status).toBe(200);
-    });
   });
 
-  describe('Multi-Tenancy Bypass', () => {
+  describe('Multi-Tenancy Bypass Security', () => {
     let otherOrgId;
     let otherHomelessId;
 
     beforeAll(async () => {
       // Create another organization
       const otherOrg = await prisma.organization.create({
-        data: { name: 'Other Org', type: 'MUNICIPALITY' },
+        data: { name: 'Other Org Secure', type: 'MUNICIPALITY' },
       });
       otherOrgId = otherOrg.id;
 
@@ -108,9 +113,9 @@ describe('Global ADMIN Bypass - Integration Tests', () => {
         data: {
           lat: -32.0000,
           lng: -65.0000,
-          apodo: 'Other Org Subject',
+          apodo: 'Other Org Subject Secure',
           organizationId: otherOrgId,
-          registradoPor: adminId, // Admin created it for simplicity
+          registradoPor: adminId, 
         },
       });
       otherHomelessId = homeless.id;
@@ -121,27 +126,27 @@ describe('Global ADMIN Bypass - Integration Tests', () => {
       await prisma.organization.delete({ where: { id: otherOrgId } });
     });
 
-    test('ADMIN can see homeless from ANY organization', async () => {
+    test('ADMIN WITHOUT secret header should NOT see other org data', async () => {
       const res = await request(app)
         .get('/api/homeless')
         .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
-      // Should see records from both orgs (the one created in main beforeAll and the one here)
-      // Note: The first one was deleted in the previous test (DELETE), so we might only see the new one.
-      // Let's verify we see at least the new one.
+      // Should NOT find the record from the other organization
       const found = res.body.data.homeless.find(h => h.id === otherHomelessId);
-      expect(found).toBeDefined();
+      expect(found).toBeUndefined();
     });
 
-    test('ADMIN can update homeless from ANY organization', async () => {
+    test('ADMIN WITH CORRECT secret header SHOULD see other org data', async () => {
       const res = await request(app)
-        .patch(`/api/homeless/${otherHomelessId}`)
+        .get('/api/homeless')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ apodo: 'Updated by Admin' });
+        .set('x-superadmin-secret', SUPERADMIN_SECRET);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.homeless.apodo).toBe('Updated by Admin');
+      // Should find the record from the other organization
+      const found = res.body.data.homeless.find(h => h.id === otherHomelessId);
+      expect(found).toBeDefined();
     });
   });
 });

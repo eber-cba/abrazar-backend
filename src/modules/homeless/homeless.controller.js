@@ -86,8 +86,8 @@ class HomelessController {
     try {
       const { organizationId, role } = req.user;
       
-      // If ADMIN, don't filter by organization
-      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+      // If SuperAdmin, don't filter by organization
+      const orgIdToUse = req.user.isSuperAdmin ? undefined : organizationId;
 
       const homeless = await homelessService.getAllHomeless(
         req.query,
@@ -120,7 +120,7 @@ class HomelessController {
       const { organizationId, role } = req.user;
       const { id } = req.params;
       
-      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+      const orgIdToUse = req.user.isSuperAdmin ? undefined : organizationId;
 
       const homeless = await homelessService.getHomelessById(id, orgIdToUse);
 
@@ -152,7 +152,7 @@ class HomelessController {
       const { organizationId, id: userId, role } = req.user;
       const { id } = req.params;
       
-      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+      const orgIdToUse = req.user.isSuperAdmin ? undefined : organizationId;
 
       let updateData = { ...req.body };
 
@@ -220,7 +220,7 @@ class HomelessController {
       const { organizationId, role } = req.user;
       const { id } = req.params;
       
-      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+      const orgIdToUse = req.user.isSuperAdmin ? undefined : organizationId;
 
       await homelessService.deleteHomeless(id, orgIdToUse);
 
@@ -251,7 +251,7 @@ class HomelessController {
       const { id } = req.params;
       const { radius } = req.query;
       
-      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+      const orgIdToUse = req.user.isSuperAdmin ? undefined : organizationId;
 
       const servicePoints = await homelessService.getNearbyServicePoints(
         id,

@@ -7,6 +7,7 @@ const permissionService = require('../services/permission.service');
 const prisma = require('../prismaClient'); // Import prisma for existence checks
 const newPermissionService = require('../modules/permissions/permission.service');
 const AppError = require('../utils/errors');
+const env = require('../config/env');
 
 // Try to import logger, fallback to console if not found
 let logger;
@@ -18,8 +19,19 @@ try {
 
 // Helper for admin bypass logging
 const logAdminBypass = (req, context) => {
-  if (req.user && req.user.role === 'ADMIN') {
-    const logMsg = `[AUTH] ADMIN bypass applied for user ${req.user.id} on ${req.method} ${req.originalUrl} [Context: ${context}]`;
+  // Check if user is ADMIN
+  if (!req.user || req.user.role !== 'ADMIN') {
+    return false;
+  }
+
+  // Check for SuperAdmin secret header
+  const secretHeader = req.headers['x-superadmin-secret'];
+  
+  if (secretHeader === env.SUPERADMIN_SECRET) {
+    // Mark user as SuperAdmin for this request
+    req.user.isSuperAdmin = true;
+    
+    const logMsg = `[AUTH] SUPERADMIN mode enabled for user ${req.user.id} on ${req.method} ${req.originalUrl} [Context: ${context}]`;
     if (logger && typeof logger.debug === 'function') {
       logger.debug(logMsg);
     } else {
@@ -27,6 +39,7 @@ const logAdminBypass = (req, context) => {
     }
     return true;
   }
+
   return false;
 };
 
