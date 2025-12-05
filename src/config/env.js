@@ -21,6 +21,9 @@ const envSchema = z.object({
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
   SUPERADMIN_SECRET: z.string().min(1),
+  SUPERADMIN_SECRET_BACKUP: z.string().optional(),
+  SUPERADMIN_JTI_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+  SUPERADMIN_RATE_LIMIT: z.string().default('3').transform((val) => parseInt(val, 10)),
 });
 
 const envVars = envSchema.safeParse(process.env);

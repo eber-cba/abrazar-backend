@@ -43,4 +43,21 @@ const logger = winston.createLogger({
   transports,
 });
 
+const superAdminLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, message }) => {
+      return `${timestamp} ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: path.join(__dirname, '../../logs/superadmin.log') }),
+  ],
+});
+
+// Attach superAdminLogger to the main logger object for backward compatibility
+logger.superAdminLogger = superAdminLogger;
+
 module.exports = logger;

@@ -8,39 +8,119 @@ const prisma = require('../prismaClient'); // Import prisma for existence checks
 const newPermissionService = require('../modules/permissions/permission.service');
 const AppError = require('../utils/errors');
 const env = require('../config/env');
+const logger = require('../config/logger');
+const { redisClient } = require('../config/redis');
 
-// Try to import logger, fallback to console if not found
-let logger;
-try {
-  logger = require('../utils/logger');
-} catch (e) {
-  logger = console;
-}
-
-// Helper for admin bypass logging
-const logAdminBypass = (req, context) => {
+// Helper for admin bypass logging and checks
+const logAdminBypass = async (req, context) => {
   // Check if user is ADMIN
   if (!req.user || req.user.role !== 'ADMIN') {
     return false;
   }
 
-  // Check for SuperAdmin secret header
-  const secretHeader = req.headers['x-superadmin-secret'];
-  
-  if (secretHeader === env.SUPERADMIN_SECRET) {
-    // Mark user as SuperAdmin for this request
-    req.user.isSuperAdmin = true;
-    
-    const logMsg = `[AUTH] SUPERADMIN mode enabled for user ${req.user.id} on ${req.method} ${req.originalUrl} [Context: ${context}]`;
-    if (logger && typeof logger.debug === 'function') {
-      logger.debug(logMsg);
-    } else {
-      console.log(logMsg);
-    }
+  // If already verified for this request, skip checks
+  if (req.user.isSuperAdmin) {
     return true;
   }
 
-  return false;
+  // Check for SuperAdmin secret header
+  const secretHeader = req.headers['x-superadmin-secret'];
+  
+  if (!secretHeader) {
+    return false;
+  }
+
+  // Double Secret Check
+  const isPrimaryValid = secretHeader === env.SUPERADMIN_SECRET;
+  const isBackupValid = env.SUPERADMIN_SECRET_BACKUP && secretHeader === env.SUPERADMIN_SECRET_BACKUP;
+
+  if (!isPrimaryValid && !isBackupValid) {
+    logger.warn(`[AUTH] Invalid SuperAdmin secret attempt by user ${req.user.id}`);
+    return false;
+  }
+
+  // Rate Limiting (3 req/min per IP)
+  const ip = req.ip || req.connection.remoteAddress;
+  const rateLimitKey = `superadmin:ratelimit:${ip}`;
+  
+  try {
+    if (redisClient) {
+      const current = await redisClient.incr(rateLimitKey);
+      if (current === 1) {
+        await redisClient.expire(rateLimitKey, 60);
+      }
+      
+      if (current > env.SUPERADMIN_RATE_LIMIT) {
+        logger.warn(`[AUTH] SuperAdmin rate limit exceeded for IP ${ip}`);
+        return false; // Deny access effectively
+      }
+    }
+  } catch (err) {
+    logger.error('[AUTH] Redis error in rate limit check', err);
+    // Fail safe: allow if redis down? Or deny? 
+    // Usually fail open for admins, but secure mode implies strictness. 
+    // Let's allow but log error to avoid locking out admin if redis fails.
+  }
+
+  // JTI Rotation (Anti-Replay)
+  if (env.SUPERADMIN_JTI_ENABLED) {
+    const jti = req.headers['x-superadmin-jti'];
+    if (!jti) {
+      logger.warn(`[AUTH] Missing JTI for SuperAdmin request by user ${req.user.id}`);
+      return false;
+    }
+
+    const jtiKey = `superadmin:jti:${jti}`;
+    try {
+      if (redisClient) {
+        const exists = await redisClient.get(jtiKey);
+        if (exists) {
+          logger.warn(`[AUTH] Replay attack detected (JTI reused) by user ${req.user.id}`);
+          return false;
+        }
+        // Store JTI for 5 minutes
+        await redisClient.set(jtiKey, '1', 'EX', 300);
+      }
+    } catch (err) {
+      logger.error('[AUTH] Redis error in JTI check', err);
+    }
+  }
+
+  // Mark user as SuperAdmin for this request
+  req.user.isSuperAdmin = true;
+  
+  // Audit Logging
+  const logMsg = `[SUPERADMIN] user=${req.user.id} org=${req.user.organizationId || 'null'} action=${req.method} path=${req.originalUrl} timestamp=${new Date().toISOString()}`;
+  
+  // 1. Console & File Log
+  if (logger.superAdminLogger) {
+    logger.superAdminLogger.info(logMsg);
+  } else {
+    // Fallback if logger structure is unexpected
+    logger.info(logMsg); 
+  }
+
+  // 2. DB Audit Log
+  try {
+    // Fire and forget to not block response, or await if strict
+    prisma.auditLog.create({
+      data: {
+        userId: req.user.id,
+        action: 'SUPERADMIN_ACCESS',
+        targetType: 'SYSTEM',
+        ipAddress: ip,
+        metadata: {
+          method: req.method,
+          url: req.originalUrl,
+          context: context
+        }
+      }
+    }).catch(err => logger.error('[AUDIT] Failed to create DB audit log', err));
+  } catch (err) {
+    logger.error('[AUDIT] Error initiating DB audit log', err);
+  }
+
+  return true;
 };
 
 /**
@@ -58,7 +138,7 @@ const requireRole = (...roles) => {
       }
 
       // GLOBAL ADMIN BYPASS
-      if (logAdminBypass(req, 'requireRole')) {
+      if (await logAdminBypass(req, 'requireRole')) {
         return next();
       }
 
@@ -85,7 +165,7 @@ const requireRole = (...roles) => {
 const canViewCase = async (req, res, next) => {
   try {
     // GLOBAL ADMIN BYPASS
-    if (logAdminBypass(req, 'canViewCase')) {
+    if (await logAdminBypass(req, 'canViewCase')) {
       return next();
     }
 
@@ -135,7 +215,7 @@ const canViewCase = async (req, res, next) => {
 const canEditCase = async (req, res, next) => {
   try {
     // GLOBAL ADMIN BYPASS
-    if (logAdminBypass(req, 'canEditCase')) {
+    if (await logAdminBypass(req, 'canEditCase')) {
       return next();
     }
 
@@ -185,7 +265,7 @@ const canEditCase = async (req, res, next) => {
 const canAssignCase = async (req, res, next) => {
   try {
     // GLOBAL ADMIN BYPASS
-    if (logAdminBypass(req, 'canAssignCase')) {
+    if (await logAdminBypass(req, 'canAssignCase')) {
       return next();
     }
 
@@ -235,7 +315,7 @@ const canAssignCase = async (req, res, next) => {
 const canCloseCase = async (req, res, next) => {
   try {
     // GLOBAL ADMIN BYPASS
-    if (logAdminBypass(req, 'canCloseCase')) {
+    if (await logAdminBypass(req, 'canCloseCase')) {
       return next();
     }
 
@@ -285,7 +365,7 @@ const canCloseCase = async (req, res, next) => {
 const canManageTeam = async (req, res, next) => {
   try {
     // GLOBAL ADMIN BYPASS
-    if (logAdminBypass(req, 'canManageTeam')) {
+    if (await logAdminBypass(req, 'canManageTeam')) {
       return next();
     }
 
@@ -335,7 +415,7 @@ const canManageTeam = async (req, res, next) => {
 const canViewStatistics = async (req, res, next) => {
   try {
     // GLOBAL ADMIN BYPASS
-    if (logAdminBypass(req, 'canViewStatistics')) {
+    if (await logAdminBypass(req, 'canViewStatistics')) {
       return next();
     }
 
@@ -373,7 +453,7 @@ const canViewStatistics = async (req, res, next) => {
 const canCreateSubUsers = async (req, res, next) => {
   try {
     // GLOBAL ADMIN BYPASS
-    if (logAdminBypass(req, 'canCreateSubUsers')) {
+    if (await logAdminBypass(req, 'canCreateSubUsers')) {
       return next();
     }
 
@@ -414,7 +494,7 @@ const canManageServicePoint = async (req, res, next) => {
     const { organizationId } = req; // From multi-tenant middleware
 
     // If global admin, allow
-    if (logAdminBypass(req, 'canManageServicePoint')) {
+    if (await logAdminBypass(req, 'canManageServicePoint')) {
       return next();
     }
 
@@ -442,7 +522,7 @@ const requirePermission = (permissionName) => {
       }
 
       // GLOBAL ADMIN BYPASS
-      if (logAdminBypass(req, `requirePermission:${permissionName}`)) {
+      if (await logAdminBypass(req, `requirePermission:${permissionName}`)) {
         return next();
       }
 
@@ -475,7 +555,7 @@ const requireAnyPermission = (...permissionNames) => {
       }
 
       // GLOBAL ADMIN BYPASS
-      if (logAdminBypass(req, `requireAnyPermission:${permissionNames.join(',')}`)) {
+      if (await logAdminBypass(req, `requireAnyPermission:${permissionNames.join(',')}`)) {
         return next();
       }
 
@@ -512,7 +592,7 @@ const requireAllPermissions = (...permissionNames) => {
       }
 
       // GLOBAL ADMIN BYPASS
-      if (logAdminBypass(req, `requireAllPermissions:${permissionNames.join(',')}`)) {
+      if (await logAdminBypass(req, `requireAllPermissions:${permissionNames.join(',')}`)) {
         return next();
       }
 
