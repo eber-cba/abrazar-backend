@@ -22,12 +22,12 @@ const upload = require('../../middlewares/upload.middleware');
 /**
  * @route   POST /api/homeless
  * @desc    Create a new homeless record
- * @access  COORDINATOR, VOLUNTEER
+ * @access  ADMIN, COORDINATOR, VOLUNTEER
  */
 router.post(
   '/',
   authenticate,
-  requireRole('COORDINATOR', 'SOCIAL_WORKER', 'VOLUNTEER', 'ORGANIZATION_ADMIN'),
+  requireRole('ADMIN', 'COORDINATOR', 'SOCIAL_WORKER', 'VOLUNTEER', 'ORGANIZATION_ADMIN'),
   upload.single('foto'),
   validate(createHomelessSchema),
   homelessController.createHomeless
@@ -36,12 +36,12 @@ router.post(
 /**
  * @route   GET /api/homeless
  * @desc    Get all homeless records (filtered by organization)
- * @access  COORDINATOR, VOLUNTEER
+ * @access  ADMIN, COORDINATOR, VOLUNTEER
  */
 router.get(
   '/',
   authenticate,
-  requireRole('COORDINATOR', 'SOCIAL_WORKER', 'VOLUNTEER', 'ORGANIZATION_ADMIN', 'DATA_ANALYST'),
+  requireRole('ADMIN', 'COORDINATOR', 'SOCIAL_WORKER', 'VOLUNTEER', 'ORGANIZATION_ADMIN', 'DATA_ANALYST'),
   validate(listHomelessSchema),
   homelessController.getAllHomeless
 );
@@ -49,12 +49,12 @@ router.get(
 /**
  * @route   GET /api/homeless/:id
  * @desc    Get homeless by ID
- * @access  COORDINATOR, VOLUNTEER
+ * @access  ADMIN, COORDINATOR, VOLUNTEER
  */
 router.get(
   '/:id',
   authenticate,
-  requireRole('COORDINATOR', 'SOCIAL_WORKER', 'VOLUNTEER', 'ORGANIZATION_ADMIN', 'DATA_ANALYST'),
+  requireRole('ADMIN', 'COORDINATOR', 'SOCIAL_WORKER', 'VOLUNTEER', 'ORGANIZATION_ADMIN', 'DATA_ANALYST'),
   validate(getHomelessByIdSchema),
   homelessController.getHomelessById
 );
@@ -62,12 +62,12 @@ router.get(
 /**
  * @route   PATCH /api/homeless/:id
  * @desc    Update homeless record
- * @access  COORDINATOR, SOCIAL_WORKER, ORGANIZATION_ADMIN
+ * @access  ADMIN, COORDINATOR, SOCIAL_WORKER, ORGANIZATION_ADMIN
  */
 router.patch(
   '/:id',
   authenticate,
-  requireRole('COORDINATOR', 'SOCIAL_WORKER', 'ORGANIZATION_ADMIN'),
+  requireRole('ADMIN', 'COORDINATOR', 'SOCIAL_WORKER', 'ORGANIZATION_ADMIN'),
   upload.single('foto'),
   validate(updateHomelessSchema),
   homelessController.updateHomeless
@@ -76,7 +76,7 @@ router.patch(
 /**
  * @route   DELETE /api/homeless/:id
  * @desc    Delete homeless record
- * @access  COORDINATOR, ORGANIZATION_ADMIN
+ * @access  COORDINATOR, ORGANIZATION_ADMIN (or SuperAdmin)
  */
 router.delete(
   '/:id',
@@ -89,12 +89,12 @@ router.delete(
 /**
  * @route   GET /api/homeless/:id/nearby-services
  * @desc    Get nearby service points
- * @access  COORDINATOR, VOLUNTEER
+ * @access  ADMIN, COORDINATOR, VOLUNTEER
  */
 router.get(
   '/:id/nearby-services',
   authenticate,
-  requireRole('COORDINATOR', 'SOCIAL_WORKER', 'VOLUNTEER', 'ORGANIZATION_ADMIN'),
+  requireRole('ADMIN', 'COORDINATOR', 'SOCIAL_WORKER', 'VOLUNTEER', 'ORGANIZATION_ADMIN'),
   validate(getNearbyServicesSchema),
   homelessController.getNearbyServicePoints
 );

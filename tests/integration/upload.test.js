@@ -2,7 +2,6 @@ const request = require('supertest');
 const app = require('../../src/app');
 const { PrismaClient } = require('@prisma/client');
 const { signToken } = require('../../src/utils/jwt');
-const path = require('path');
 
 const prisma = new PrismaClient();
 
@@ -17,6 +16,48 @@ jest.mock('../../src/config/cloudinary', () => ({
   }),
   deleteImage: jest.fn().mockResolvedValue({ result: 'ok' }),
   getThumbnailUrl: jest.fn().mockReturnValue('https://res.cloudinary.com/demo/image/upload/c_fill,w_150,h_150/v1234567890/abrazar/test/image.jpg'),
+}));
+
+// Mock Redis
+jest.mock('../../src/config/redis', () => {
+  const mRedis = {
+    incr: jest.fn().mockResolvedValue(1),
+    expire: jest.fn().mockResolvedValue(1),
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue('OK'),
+    sadd: jest.fn().mockResolvedValue(1),
+    srem: jest.fn().mockResolvedValue(1),
+    smembers: jest.fn().mockResolvedValue([]),
+    del: jest.fn().mockResolvedValue(1),
+    on: jest.fn(),
+    connect: jest.fn().mockResolvedValue(),
+    status: 'ready',
+  };
+  return { 
+    redisClient: mRedis,
+    redisSubscriber: { ...mRedis, subscribe: jest.fn() }
+  };
+});
+
+describe('Upload Integration Tests', () => {
+  let organization;
+  let adminUser;
+  let adminToken;
+
+  const cleanup = async () => {
+    try {
+      await prisma.homeless.deleteMany({ where: { organizationId: organization?.id } });
+      await prisma.case.deleteMany({ where: { organizationId: organization?.id } });
+      await prisma.user.deleteMany({ where: { organizationId: organization?.id } });
+      if (organization?.id) {
+        await prisma.organization.delete({ where: { id: organization.id } });
+      }
+    } catch (e) {
+      // Ignore cleanup errors
+    }
+  };
+
+  beforeAll(async () => {
     organization = await prisma.organization.create({
       data: {
         name: 'Upload Test Org',
@@ -27,7 +68,7 @@ jest.mock('../../src/config/cloudinary', () => ({
     // Create Admin User
     adminUser = await prisma.user.create({
       data: {
-        email: 'admin@upload.test',
+        email: `admin-upload-${Date.now()}@upload.test`,
         password: 'password123',
         name: 'Admin User',
         role: 'ORGANIZATION_ADMIN',
