@@ -86,9 +86,12 @@ class HomelessController {
     try {
       const { organizationId, role } = req.user;
       
+      // If ADMIN, don't filter by organization
+      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+
       const homeless = await homelessService.getAllHomeless(
         req.query,
-        organizationId,
+        orgIdToUse,
         role
       );
 
@@ -114,10 +117,12 @@ class HomelessController {
    */
   async getHomelessById(req, res) {
     try {
-      const { organizationId } = req.user;
+      const { organizationId, role } = req.user;
       const { id } = req.params;
       
-      const homeless = await homelessService.getHomelessById(id, organizationId);
+      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+
+      const homeless = await homelessService.getHomelessById(id, orgIdToUse);
 
       res.status(200).json({
         status: 'success',
@@ -147,12 +152,14 @@ class HomelessController {
       const { organizationId, id: userId, role } = req.user;
       const { id } = req.params;
       
+      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+
       let updateData = { ...req.body };
 
       // Handle image upload
       if (req.file) {
         // Get existing record to delete old image
-        const existingHomeless = await homelessService.getHomelessById(id, organizationId);
+        const existingHomeless = await homelessService.getHomelessById(id, orgIdToUse);
         
         if (existingHomeless.fotoUrl) {
           try {
@@ -184,7 +191,7 @@ class HomelessController {
         id,
         updateData,
         userId,
-        organizationId,
+        orgIdToUse,
         role
       );
 
@@ -210,10 +217,12 @@ class HomelessController {
    */
   async deleteHomeless(req, res) {
     try {
-      const { organizationId } = req.user;
+      const { organizationId, role } = req.user;
       const { id } = req.params;
       
-      await homelessService.deleteHomeless(id, organizationId);
+      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+
+      await homelessService.deleteHomeless(id, orgIdToUse);
 
       res.status(200).json({
         status: 'success',
@@ -238,13 +247,15 @@ class HomelessController {
    */
   async getNearbyServicePoints(req, res) {
     try {
-      const { organizationId } = req.user;
+      const { organizationId, role } = req.user;
       const { id } = req.params;
       const { radius } = req.query;
       
+      const orgIdToUse = role === 'ADMIN' ? undefined : organizationId;
+
       const servicePoints = await homelessService.getNearbyServicePoints(
         id,
-        organizationId,
+        orgIdToUse,
         radius ? parseFloat(radius) : 5
       );
 

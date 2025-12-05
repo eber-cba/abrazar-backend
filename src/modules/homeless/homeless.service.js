@@ -66,12 +66,17 @@ class HomelessService {
    * Get all homeless records with multi-tenant filtering.
    * 
    * @param {Object} filters - Query filters (consent, urgency, date range)
-   * @param {string} organizationId - Organization ID
+   * @param {string} [organizationId] - Organization ID (optional for ADMIN)
    * @param {string} userRole - User role
    * @returns {Promise<Array>} List of homeless records
    */
   async getAllHomeless(filters, organizationId, userRole) {
-    const where = { organizationId };
+    const where = {};
+    
+    // Only filter by organization if ID is provided
+    if (organizationId) {
+      where.organizationId = organizationId;
+    }
 
     // Filter by consent if needed
     if (filters.consentimientoVerbal !== undefined) {
@@ -116,16 +121,21 @@ class HomelessService {
 
   /**
    * Get homeless by ID.
-   * Ensures the record belongs to the user's organization.
+   * Ensures the record belongs to the user's organization (unless admin).
    * 
    * @param {string} id - Homeless ID
-   * @param {string} organizationId - Organization ID
+   * @param {string} [organizationId] - Organization ID (optional for ADMIN)
    * @returns {Promise<Object>} Homeless record
    * @throws {Error} If record not found
    */
   async getHomelessById(id, organizationId) {
+    const where = { id };
+    if (organizationId) {
+      where.organizationId = organizationId;
+    }
+
     const homeless = await prisma.homeless.findFirst({
-      where: { id, organizationId },
+      where,
       include: {
         registrador: {
           select: { id: true, email: true, name: true, role: true },
@@ -150,7 +160,7 @@ class HomelessService {
    * @param {string} id - Homeless ID
    * @param {Object} data - Update data
    * @param {string} userId - User ID updating
-   * @param {string} organizationId - Organization ID
+   * @param {string} [organizationId] - Organization ID (optional for ADMIN)
    * @param {string} userRole - User role
    * @returns {Promise<Object>} Updated record
    */
@@ -199,7 +209,7 @@ class HomelessService {
    * Delete homeless record.
    * 
    * @param {string} id - Homeless ID
-   * @param {string} organizationId - Organization ID
+   * @param {string} [organizationId] - Organization ID (optional for ADMIN)
    * @returns {Promise<void>}
    */
   async deleteHomeless(id, organizationId) {
@@ -217,16 +227,21 @@ class HomelessService {
    * Get nearby service points for a homeless person.
    * 
    * @param {string} homelessId - Homeless ID
-   * @param {string} organizationId - Organization ID
+   * @param {string} [organizationId] - Organization ID (optional for ADMIN)
    * @param {number} radiusKm - Search radius in kilometers (default 5)
    * @returns {Promise<Array>} List of nearby service points with distance
    */
   async getNearbyServicePoints(homelessId, organizationId, radiusKm = 5) {
     const homeless = await this.getHomelessById(homelessId, organizationId);
 
-    // Get all service points for the organization
+    // Get all service points (filter by org only if provided)
+    const spWhere = {};
+    if (organizationId) {
+      spWhere.organizationId = organizationId;
+    }
+
     const servicePoints = await prisma.servicePoint.findMany({
-      where: { organizationId },
+      where: spWhere,
       include: {
         zone: {
           select: { id: true, name: true },

@@ -461,6 +461,7 @@ Route Handler → Service → Prisma/Redis → Response
    - RBAC con 5 roles
    - PBAC con permisos granulares
    - Multi-tenancy estricto
+   - **Global ADMIN Bypass**: El rol `ADMIN` tiene acceso irrestricto a todos los endpoints y recursos, saltando validaciones de roles y permisos específicos. Este acceso se audita en los logs.
 
 3. **Protección de Datos**
 

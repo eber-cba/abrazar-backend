@@ -5,6 +5,30 @@
 
 const permissionService = require('../services/permission.service');
 const prisma = require('../prismaClient'); // Import prisma for existence checks
+const newPermissionService = require('../modules/permissions/permission.service');
+const AppError = require('../utils/errors');
+
+// Try to import logger, fallback to console if not found
+let logger;
+try {
+  logger = require('../utils/logger');
+} catch (e) {
+  logger = console;
+}
+
+// Helper for admin bypass logging
+const logAdminBypass = (req, context) => {
+  if (req.user && req.user.role === 'ADMIN') {
+    const logMsg = `[AUTH] ADMIN bypass applied for user ${req.user.id} on ${req.method} ${req.originalUrl} [Context: ${context}]`;
+    if (logger && typeof logger.debug === 'function') {
+      logger.debug(logMsg);
+    } else {
+      console.log(logMsg);
+    }
+    return true;
+  }
+  return false;
+};
 
 /**
  * Require specific role(s)
@@ -18,6 +42,11 @@ const requireRole = (...roles) => {
           status: 'fail',
           message: 'Authentication required',
         });
+      }
+
+      // GLOBAL ADMIN BYPASS
+      if (logAdminBypass(req, 'requireRole')) {
+        return next();
       }
 
       const hasRole = await permissionService.hasRole(req.user.id, roles);
@@ -42,6 +71,11 @@ const requireRole = (...roles) => {
  */
 const canViewCase = async (req, res, next) => {
   try {
+    // GLOBAL ADMIN BYPASS
+    if (logAdminBypass(req, 'canViewCase')) {
+      return next();
+    }
+
     const caseId = req.params.id || req.params.caseId;
 
     if (!caseId) {
@@ -87,6 +121,11 @@ const canViewCase = async (req, res, next) => {
  */
 const canEditCase = async (req, res, next) => {
   try {
+    // GLOBAL ADMIN BYPASS
+    if (logAdminBypass(req, 'canEditCase')) {
+      return next();
+    }
+
     const caseId = req.params.id || req.params.caseId;
 
     if (!caseId) {
@@ -132,6 +171,11 @@ const canEditCase = async (req, res, next) => {
  */
 const canAssignCase = async (req, res, next) => {
   try {
+    // GLOBAL ADMIN BYPASS
+    if (logAdminBypass(req, 'canAssignCase')) {
+      return next();
+    }
+
     const caseId = req.params.id || req.params.caseId;
 
     if (!caseId) {
@@ -177,6 +221,11 @@ const canAssignCase = async (req, res, next) => {
  */
 const canCloseCase = async (req, res, next) => {
   try {
+    // GLOBAL ADMIN BYPASS
+    if (logAdminBypass(req, 'canCloseCase')) {
+      return next();
+    }
+
     const caseId = req.params.id || req.params.caseId;
 
     if (!caseId) {
@@ -222,6 +271,11 @@ const canCloseCase = async (req, res, next) => {
  */
 const canManageTeam = async (req, res, next) => {
   try {
+    // GLOBAL ADMIN BYPASS
+    if (logAdminBypass(req, 'canManageTeam')) {
+      return next();
+    }
+
     const teamId = req.params.id || req.params.teamId;
 
     if (!teamId) {
@@ -267,6 +321,11 @@ const canManageTeam = async (req, res, next) => {
  */
 const canViewStatistics = async (req, res, next) => {
   try {
+    // GLOBAL ADMIN BYPASS
+    if (logAdminBypass(req, 'canViewStatistics')) {
+      return next();
+    }
+
     const orgId = req.params.orgId || req.organizationId;
 
     if (!orgId) {
@@ -300,6 +359,11 @@ const canViewStatistics = async (req, res, next) => {
  */
 const canCreateSubUsers = async (req, res, next) => {
   try {
+    // GLOBAL ADMIN BYPASS
+    if (logAdminBypass(req, 'canCreateSubUsers')) {
+      return next();
+    }
+
     const orgId = req.params.orgId || req.params.id || req.body.organizationId || req.organizationId;
 
     if (!orgId) {
@@ -328,9 +392,6 @@ const canCreateSubUsers = async (req, res, next) => {
   }
 };
 
-
-
-
 /**
  * Middleware to check if user can manage service points
  */
@@ -340,7 +401,7 @@ const canManageServicePoint = async (req, res, next) => {
     const { organizationId } = req; // From multi-tenant middleware
 
     // If global admin, allow
-    if (req.user.role === 'ADMIN') {
+    if (logAdminBypass(req, 'canManageServicePoint')) {
       return next();
     }
 
@@ -357,13 +418,6 @@ const canManageServicePoint = async (req, res, next) => {
   }
 };
 
-// ============================================================================
-// NEW RBAC/PBAC MIDDLEWARE
-// ============================================================================
-
-const newPermissionService = require('../modules/permissions/permission.service');
-const AppError = require('../utils/errors');
-
 /**
  * Middleware to check if user has required permission
  */
@@ -372,6 +426,11 @@ const requirePermission = (permissionName) => {
     try {
       if (!req.user) {
         return next(new AppError('Authentication required', 401));
+      }
+
+      // GLOBAL ADMIN BYPASS
+      if (logAdminBypass(req, `requirePermission:${permissionName}`)) {
+        return next();
       }
 
       const hasPermission = await newPermissionService.hasPermission(
@@ -400,6 +459,11 @@ const requireAnyPermission = (...permissionNames) => {
     try {
       if (!req.user) {
         return next(new AppError('Authentication required', 401));
+      }
+
+      // GLOBAL ADMIN BYPASS
+      if (logAdminBypass(req, `requireAnyPermission:${permissionNames.join(',')}`)) {
+        return next();
       }
 
       for (const permissionName of permissionNames) {
@@ -432,6 +496,11 @@ const requireAllPermissions = (...permissionNames) => {
     try {
       if (!req.user) {
         return next(new AppError('Authentication required', 401));
+      }
+
+      // GLOBAL ADMIN BYPASS
+      if (logAdminBypass(req, `requireAllPermissions:${permissionNames.join(',')}`)) {
+        return next();
       }
 
       for (const permissionName of permissionNames) {
