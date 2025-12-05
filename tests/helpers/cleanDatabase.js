@@ -12,7 +12,11 @@ async function cleanDatabase() {
   await prisma.emergency.deleteMany();
   await prisma.caseHistory.deleteMany();
   await prisma.caseStatusHistory.deleteMany();
-  await prisma.legalConsent.deleteMany();
+  
+  // Consent tables - use try/catch as these may not exist in all envs
+  try { await prisma.consent.deleteMany(); } catch (e) { /* ignore */ }
+  try { await prisma.consentHistory.deleteMany(); } catch (e) { /* ignore */ }
+  try { await prisma.consentType.deleteMany(); } catch (e) { /* ignore */ }
   
   // Level 4: Entities with multiple dependencies
   await prisma.case.deleteMany();
